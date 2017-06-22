@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader
 
 from snli.model import SNLIModel
 from snli.utils.dataset import SNLIDataset
-
+from utils.glove import load_glove
 
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s %(levelname)-8s %(message)s')
@@ -41,16 +41,26 @@ def train(args):
                       word_dim=args.word_dim, hidden_dim=args.hidden_dim,
                       clf_hidden_dim=args.clf_hidden_dim,
                       clf_num_layers=args.clf_num_layers)
+    if args.glove:
+        logging.info('Loading GloVe pretrained vectors...')
+        glove_weight = load_glove(
+            path=args.glove, vocab=word_vocab,
+            init_weight=model.word_embedding.weight.data.numpy())
+        model.word_embedding.weight.data.set_(torch.FloatTensor(glove_weight))
+    if args.fix_word_embedding:
+        logging.info('Will not update word embeddings')
+        model.word_embedding.weight.requires_grad = False
     if args.gpu > -1:
         logging.info(f'Using GPU {args.gpu}')
         model.cuda(args.gpu)
-    optimizer = optim.Adam(params=model.parameters())
+    params = [p for p in model.parameters() if p.requires_grad]
+    optimizer = optim.Adam(params=params)
     criterion = nn.CrossEntropyLoss()
 
     train_summary_writer = tensorboard.FileWriter(
-        logdir=os.path.join(args.save_dir, 'train'))
+        logdir=os.path.join(args.save_dir, 'log', 'train'), flush_secs=10)
     valid_summary_writer = tensorboard.FileWriter(
-        logdir=os.path.join(args.save_dir, 'valid'))
+        logdir=os.path.join(args.save_dir, 'log', 'valid'), flush_secs=10)
 
     def wrap_with_variable(tensor, volatile):
         if args.gpu > -1:
@@ -81,7 +91,7 @@ def train(args):
         if is_training:
             optimizer.zero_grad()
             loss.backward()
-            clip_grad_norm(parameters=model.parameters(), max_norm=5)
+            clip_grad_norm(parameters=params, max_norm=5)
             optimizer.step()
         return loss, accuracy
 
@@ -141,6 +151,9 @@ def main():
     parser.add_argument('--hidden-dim', required=True, type=int)
     parser.add_argument('--clf-hidden-dim', required=True, type=int)
     parser.add_argument('--clf-num-layers', required=True, type=int)
+    parser.add_argument('--glove', default=None)
+    parser.add_argument('--fix-word-embedding', default=False,
+                        action='store_true')
     parser.add_argument('--gpu', default=-1, type=int)
     parser.add_argument('--batch-size', required=True, type=int)
     parser.add_argument('--max-epoch', required=True, type=int)
