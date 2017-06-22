@@ -13,7 +13,7 @@ from torch.nn.utils import clip_grad_norm
 from torch.utils.data import DataLoader
 
 from snli.model import SNLIModel
-from snli.util.dataset import SNLIDataset
+from snli.utils.dataset import SNLIDataset
 
 
 logging.basicConfig(level=logging.INFO,

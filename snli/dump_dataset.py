@@ -1,7 +1,7 @@
 import argparse
 import pickle
 
-from snli.util.dataset import SNLIDataset
+from snli.utils.dataset import SNLIDataset
 from utils.vocab import Vocab
 
 
