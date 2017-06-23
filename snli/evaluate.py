@@ -1,6 +1,7 @@
 import argparse
 import pickle
 
+import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
@@ -18,6 +19,8 @@ def evaluate(args):
                       word_dim=args.word_dim, hidden_dim=args.hidden_dim,
                       clf_hidden_dim=args.clf_hidden_dim,
                       clf_num_layers=args.clf_num_layers)
+    num_params = sum(np.prod(p.size()) for p in model.parameters())
+    print(f'# of parameters: {num_params}')
     model.load_state_dict(torch.load(args.model))
     model.eval()
     if args.gpu > -1:
