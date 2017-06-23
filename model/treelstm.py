@@ -45,10 +45,11 @@ class BinaryTreeLSTMLayer(nn.Module):
 
 class BinaryTreeLSTM(nn.Module):
 
-    def __init__(self, word_dim, hidden_dim):
+    def __init__(self, word_dim, hidden_dim, gumbel_temperature):
         super(BinaryTreeLSTM, self).__init__()
         self.word_dim = word_dim
         self.hidden_dim = hidden_dim
+        self.gumbel_temperature = gumbel_temperature
 
         self.word_linear = nn.Linear(in_features=word_dim,
                                      out_features=2 * hidden_dim)
@@ -78,13 +79,20 @@ class BinaryTreeLSTM(nn.Module):
         old_h_left, old_h_right = old_h[:, :-1, :], old_h[:, 1:, :]
         old_c_left, old_c_right = old_c[:, :-1, :], old_c[:, 1:, :]
         comp_weights = basic.dot_nd(query=self.comp_query, candidates=new_h)
-        select_mask = basic.st_gumbel_softmax(logits=comp_weights)
+        if self.training:
+            select_mask = basic.st_gumbel_softmax(
+                logits=comp_weights, temperature=self.gumbel_temperature)
+        else:
+            select_mask = basic.convert_to_one_hot(
+                indices=comp_weights.max(1)[1].squeeze(1),
+                num_classes=comp_weights.size(1))
+            select_mask = select_mask.float()
         select_mask_expand = select_mask.unsqueeze(2).expand_as(new_h)
         select_mask_cumsum = select_mask.cumsum(1)
         left_mask = 1 - select_mask_cumsum
         left_mask_expand = left_mask.unsqueeze(2).expand_as(old_h_left)
         right_mask_leftmost_col = Variable(
-            select_mask_cumsum.data.new(new_h.size(0), 1))
+            select_mask_cumsum.data.new(new_h.size(0), 1).zero_())
         right_mask = torch.cat(
             [right_mask_leftmost_col, select_mask_cumsum[:, :-1]], dim=1)
         right_mask_expand = right_mask.unsqueeze(2).expand_as(old_h_right)

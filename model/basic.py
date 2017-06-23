@@ -66,6 +66,25 @@ def dot_nd(query, candidates):
     return output
 
 
+def convert_to_one_hot(indices, num_classes):
+    """
+    Args:
+        indices (Variable): A vector containing indices,
+            whose size is (batch_size,).
+        num_classes (Variable): The number of classes, which would be
+            the second dimension of the resulting one-hot matrix.
+
+    Returns:
+        result: The one-hot matrix of size (batch_size, num_classes).
+    """
+
+    batch_size = indices.size(0)
+    indices = indices.unsqueeze(1)
+    one_hot = Variable(indices.data.new(batch_size, num_classes).zero_()
+                       .scatter_(1, indices.data, 1))
+    return one_hot
+
+
 def st_gumbel_softmax(logits, temperature=1.0):
     """
     Return the result of Straight-Through Gumbel-Softmax Estimation.
@@ -90,8 +109,7 @@ def st_gumbel_softmax(logits, temperature=1.0):
     gumbel_noise = Variable(-torch.log(-torch.log(u + eps) + eps))
     y = logits + gumbel_noise
     y = functional.softmax(y / temperature)
-    y_argmax = y.max(1)[1]
-    y_hard = Variable(y.data.new(*y.size()).zero_()
-                      .scatter_(1, y_argmax.data, 1.0))
+    y_argmax = y.max(1)[1].squeeze(1)
+    y_hard = convert_to_one_hot(indices=y_argmax, num_classes=y.size(1)).float()
     y = (y_hard - y).detach() + y
     return y

@@ -3,6 +3,7 @@ import logging
 import os
 import pickle
 
+import math
 import tensorboard
 from tensorboard import summary
 
@@ -106,6 +107,12 @@ def train(args):
     for epoch_num in range(1, args.max_epoch + 1):
         logging.info(f'Epoch {epoch_num}: start')
         for batch_iter, train_batch in enumerate(train_loader):
+            if args.anneal_temperature and iter_count % 500 == 0:
+                gamma = 0.00001
+                new_temperature = max([0.5, math.exp(-gamma * iter_count)])
+                model.encoder.gumbel_temperature = new_temperature
+                logging.info(f'Iter #{iter_count}: '
+                             f'Set Gumbel temperature to {new_temperature:.4f}')
             train_loss, train_accuracy = run_iter(
                 batch=train_batch, is_training=True)
             iter_count += 1
@@ -151,6 +158,8 @@ def main():
     parser.add_argument('--hidden-dim', required=True, type=int)
     parser.add_argument('--clf-hidden-dim', required=True, type=int)
     parser.add_argument('--clf-num-layers', required=True, type=int)
+    parser.add_argument('--anneal-temperature', default=False,
+                        action='store_true')
     parser.add_argument('--glove', default=None)
     parser.add_argument('--fix-word-embedding', default=False,
                         action='store_true')
