@@ -9,13 +9,13 @@ from tensorboard import summary
 
 import torch
 from torch import nn, optim
-from torch.autograd import Variable
 from torch.nn.utils import clip_grad_norm
 from torch.utils.data import DataLoader
 
 from snli.model import SNLIModel
 from snli.utils.dataset import SNLIDataset
 from utils.glove import load_glove
+from utils.helper import wrap_with_variable, unwrap_scalar_variable
 
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s %(levelname)-8s %(message)s')
@@ -63,27 +63,18 @@ def train(args):
     valid_summary_writer = tensorboard.FileWriter(
         logdir=os.path.join(args.save_dir, 'log', 'valid'), flush_secs=10)
 
-    def wrap_with_variable(tensor, volatile):
-        if args.gpu > -1:
-            return Variable(tensor.cuda(args.gpu), volatile=volatile)
-        else:
-            return Variable(tensor, volatile=volatile)
-
-    def unwrap_scalar_variable(var):
-        if isinstance(var, Variable):
-            return var.data[0]
-        else:
-            return var
-
     def run_iter(batch, is_training):
         model.train(is_training)
-        pre = wrap_with_variable(batch['pre'], volatile=not is_training)
-        hyp = wrap_with_variable(batch['hyp'], volatile=not is_training)
-        pre_length = wrap_with_variable(batch['pre_length'],
-                                        volatile=not is_training)
-        hyp_length = wrap_with_variable(batch['hyp_length'],
-                                        volatile=not is_training)
-        label = wrap_with_variable(batch['label'], volatile=not is_training)
+        pre = wrap_with_variable(batch['pre'], volatile=not is_training,
+                                 gpu=args.gpu)
+        hyp = wrap_with_variable(batch['hyp'], volatile=not is_training,
+                                 gpu=args.gpu)
+        pre_length = wrap_with_variable(
+            batch['pre_length'], volatile=not is_training, gpu=args.gpu)
+        hyp_length = wrap_with_variable(
+            batch['hyp_length'], volatile=not is_training, gpu=args.gpu)
+        label = wrap_with_variable(batch['label'], volatile=not is_training,
+                                   gpu=args.gpu)
         logits = model.forward(pre=pre, pre_length=pre_length,
                                hyp=hyp, hyp_length=hyp_length)
         label_pred = logits.max(1)[1].squeeze(1)
