@@ -20,7 +20,11 @@ def evaluate(args):
                       clf_hidden_dim=args.clf_hidden_dim,
                       clf_num_layers=args.clf_num_layers)
     num_params = sum(np.prod(p.size()) for p in model.parameters())
+    num_embedding_params = np.prod(model.word_embedding.weight.size())
     print(f'# of parameters: {num_params}')
+    print(f'# of word embedding parameters: {num_embedding_params}')
+    print(f'# of parameters (excluding word embeddings): '
+          f'{num_params - num_embedding_params}')
     model.load_state_dict(torch.load(args.model))
     model.eval()
     if args.gpu > -1:
