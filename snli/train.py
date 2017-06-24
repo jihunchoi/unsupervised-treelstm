@@ -17,6 +17,7 @@ from snli.utils.dataset import SNLIDataset
 from utils.glove import load_glove
 from utils.helper import wrap_with_variable, unwrap_scalar_variable
 
+
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s %(levelname)-8s %(message)s')
 
