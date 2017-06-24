@@ -58,7 +58,7 @@ class SNLIModel(nn.Module):
         self.hidden_dim = hidden_dim
         self.clf_hidden_dim = clf_hidden_dim
         self.clf_num_layers = clf_num_layers
-        self.leaf_rnn = use_leaf_rnn
+        self.use_leaf_rnn = use_leaf_rnn
 
         self.word_embedding = nn.Embedding(num_embeddings=num_words,
                                            embedding_dim=word_dim)
