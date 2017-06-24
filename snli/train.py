@@ -41,7 +41,8 @@ def train(args):
     model = SNLIModel(num_classes=len(label_vocab), num_words=len(word_vocab),
                       word_dim=args.word_dim, hidden_dim=args.hidden_dim,
                       clf_hidden_dim=args.clf_hidden_dim,
-                      clf_num_layers=args.clf_num_layers)
+                      clf_num_layers=args.clf_num_layers,
+                      use_leaf_rnn=args.leaf_rnn)
     if args.glove:
         logging.info('Loading GloVe pretrained vectors...')
         glove_weight = load_glove(
@@ -149,6 +150,7 @@ def main():
     parser.add_argument('--hidden-dim', required=True, type=int)
     parser.add_argument('--clf-hidden-dim', required=True, type=int)
     parser.add_argument('--clf-num-layers', required=True, type=int)
+    parser.add_argument('--leaf-rnn', default=False, action='store_true')
     parser.add_argument('--anneal-temperature', default=False,
                         action='store_true')
     parser.add_argument('--glove', default=None)

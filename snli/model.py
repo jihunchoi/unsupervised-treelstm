@@ -51,17 +51,19 @@ class SNLIClassifier(nn.Module):
 class SNLIModel(nn.Module):
 
     def __init__(self, num_classes, num_words, word_dim, hidden_dim,
-                 clf_hidden_dim, clf_num_layers):
+                 clf_hidden_dim, clf_num_layers, use_leaf_rnn):
         super(SNLIModel, self).__init__()
         self.num_classes = num_classes
         self.word_dim = word_dim
         self.hidden_dim = hidden_dim
         self.clf_hidden_dim = clf_hidden_dim
         self.clf_num_layers = clf_num_layers
+        self.leaf_rnn = use_leaf_rnn
 
         self.word_embedding = nn.Embedding(num_embeddings=num_words,
                                            embedding_dim=word_dim)
         self.encoder = BinaryTreeLSTM(word_dim=word_dim, hidden_dim=hidden_dim,
+                                      use_leaf_rnn=use_leaf_rnn,
                                       gumbel_temperature=1)
         self.classifier = SNLIClassifier(
             num_classes=num_classes, input_dim=hidden_dim,

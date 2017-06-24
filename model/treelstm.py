@@ -45,21 +45,32 @@ class BinaryTreeLSTMLayer(nn.Module):
 
 class BinaryTreeLSTM(nn.Module):
 
-    def __init__(self, word_dim, hidden_dim, gumbel_temperature):
+    def __init__(self, word_dim, hidden_dim, use_leaf_rnn, gumbel_temperature):
         super(BinaryTreeLSTM, self).__init__()
         self.word_dim = word_dim
         self.hidden_dim = hidden_dim
+        self.use_leaf_rnn = use_leaf_rnn
         self.gumbel_temperature = gumbel_temperature
 
-        self.word_linear = nn.Linear(in_features=word_dim,
-                                     out_features=2 * hidden_dim)
+        if use_leaf_rnn:
+            self.leaf_rnn_cell = nn.LSTMCell(
+                input_size=word_dim, hidden_size=hidden_dim)
+        else:
+            self.word_linear = nn.Linear(in_features=word_dim,
+                                         out_features=2 * hidden_dim)
         self.treelstm_layer = BinaryTreeLSTMLayer(hidden_dim)
         self.comp_query = nn.Parameter(torch.FloatTensor(hidden_dim))
         self.reset_parameters()
 
     def reset_parameters(self):
-        init.kaiming_normal(self.word_linear.weight.data)
-        init.constant(self.word_linear.bias.data, val=0)
+        if self.use_leaf_rnn:
+            init.kaiming_normal(self.leaf_rnn_cell.weight_ih.data)
+            init.orthogonal(self.leaf_rnn_cell.weight_hh.data)
+            init.constant(self.leaf_rnn_cell.bias_ih.data, val=0)
+            init.constant(self.leaf_rnn_cell.bias_hh.data, val=0)
+        else:
+            init.kaiming_normal(self.word_linear.weight.data)
+            init.constant(self.word_linear.bias.data, val=0)
         self.treelstm_layer.reset_parameters()
         init.normal(self.comp_query.data, mean=0, std=0.01)
 
@@ -107,8 +118,26 @@ class BinaryTreeLSTM(nn.Module):
     def forward(self, input, length):
         max_depth = input.size(1)
 
-        state = basic.apply_nd(fn=self.word_linear, input=input)
-        state = state.chunk(num_chunks=2, dim=2)
+        if self.use_leaf_rnn:
+            hs = []
+            cs = []
+            batch_size, max_length, _ = input.size()
+            zero_state = Variable(input.data.new(batch_size, self.hidden_dim)
+                                  .zero_())
+            h_prev = c_prev = zero_state
+            for i in range(max_length):
+                h, c = self.leaf_rnn_cell(
+                    input=input[:, i, :], hx=(h_prev, c_prev))
+                hs.append(h)
+                cs.append(c)
+                h_prev = h
+                c_prev = c
+            hs = torch.stack(hs, dim=1)
+            cs = torch.stack(cs, dim=1)
+            state = (hs, cs)
+        else:
+            state = basic.apply_nd(fn=self.word_linear, input=input)
+            state = state.chunk(num_chunks=2, dim=2)
         for i in range(max_depth - 1):
             h, c = state
             l = (h[:, :-1, :], c[:, :-1, :])
