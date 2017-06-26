@@ -34,7 +34,8 @@ class SNLIDataset(Dataset):
 
     def _pad_sentence(self, data):
         max_length = max(len(d) for d in data)
-        padded = [d + [self.word_vocab.pad_id] * (max_length - len(d)) for d in data]
+        padded = [d + [self.word_vocab.pad_id] * (max_length - len(d))
+                  for d in data]
         return padded
 
     def __len__(self):

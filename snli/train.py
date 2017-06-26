@@ -79,8 +79,8 @@ def train(args):
             batch['hyp_length'], volatile=not is_training, gpu=args.gpu)
         label = wrap_with_variable(batch['label'], volatile=not is_training,
                                    gpu=args.gpu)
-        logits = model.forward(pre=pre, pre_length=pre_length,
-                               hyp=hyp, hyp_length=hyp_length)
+        logits = model(pre=pre, pre_length=pre_length,
+                       hyp=hyp, hyp_length=hyp_length)
         label_pred = logits.max(1)[1].squeeze(1)
         accuracy = torch.eq(label, label_pred).float().mean()
         loss = criterion(input=logits, target=label)
