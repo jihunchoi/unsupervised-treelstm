@@ -1,7 +1,8 @@
+import math
 import torch
 from torch import nn
 from torch.autograd import Variable
-from torch.nn import init
+from torch.nn import init, functional
 
 from . import basic
 
@@ -45,11 +46,13 @@ class BinaryTreeLSTMLayer(nn.Module):
 
 class BinaryTreeLSTM(nn.Module):
 
-    def __init__(self, word_dim, hidden_dim, use_leaf_rnn, gumbel_temperature):
+    def __init__(self, word_dim, hidden_dim, use_leaf_rnn, intra_attention,
+                 gumbel_temperature):
         super(BinaryTreeLSTM, self).__init__()
         self.word_dim = word_dim
         self.hidden_dim = hidden_dim
         self.use_leaf_rnn = use_leaf_rnn
+        self.intra_attention = intra_attention
         self.gumbel_temperature = gumbel_temperature
 
         if use_leaf_rnn:
@@ -68,6 +71,8 @@ class BinaryTreeLSTM(nn.Module):
             init.orthogonal(self.leaf_rnn_cell.weight_hh.data)
             init.constant(self.leaf_rnn_cell.bias_ih.data, val=0)
             init.constant(self.leaf_rnn_cell.bias_hh.data, val=0)
+            # Set forget bias to 1
+            self.leaf_rnn_cell.bias_ih.data.chunk(4)[1].fill_(1)
         else:
             init.kaiming_normal(self.word_linear.weight.data)
             init.constant(self.word_linear.bias.data, val=0)
@@ -75,16 +80,15 @@ class BinaryTreeLSTM(nn.Module):
         init.normal(self.comp_query.data, mean=0, std=0.01)
 
     @staticmethod
-    def update_state(old_state, new_state, depth, length):
+    def update_state(old_state, new_state, done_mask):
         old_h, old_c = old_state
         new_h, new_c = new_state
-        mask = (torch.gt(length, depth).float().unsqueeze(1).unsqueeze(2)
-                .expand_as(new_h))
-        h = mask * new_h + (1 - mask) * old_h[:, :-1, :]
-        c = mask * new_c + (1 - mask) * old_c[:, :-1, :]
+        done_mask = done_mask.float().unsqueeze(1).unsqueeze(2).expand_as(new_h)
+        h = done_mask * new_h + (1 - done_mask) * old_h[:, :-1, :]
+        c = done_mask * new_c + (1 - done_mask) * old_c[:, :-1, :]
         return h, c
 
-    def select_composition(self, old_state, new_state):
+    def select_composition(self, old_state, new_state, mask):
         new_h, new_c = new_state
         old_h, old_c = old_state
         old_h_left, old_h_right = old_h[:, :-1, :], old_h[:, 1:, :]
@@ -92,11 +96,10 @@ class BinaryTreeLSTM(nn.Module):
         comp_weights = basic.dot_nd(query=self.comp_query, candidates=new_h)
         if self.training:
             select_mask = basic.st_gumbel_softmax(
-                logits=comp_weights, temperature=self.gumbel_temperature)
+                logits=comp_weights, temperature=self.gumbel_temperature,
+                mask=mask)
         else:
-            select_mask = basic.convert_to_one_hot(
-                indices=comp_weights.max(1)[1].squeeze(1),
-                num_classes=comp_weights.size(1))
+            select_mask = basic.greedy_select(logits=comp_weights, mask=mask)
             select_mask = select_mask.float()
         select_mask_expand = select_mask.unsqueeze(2).expand_as(new_h)
         select_mask_cumsum = select_mask.cumsum(1)
@@ -113,10 +116,14 @@ class BinaryTreeLSTM(nn.Module):
         new_c = (select_mask_expand * new_c
                  + left_mask_expand * old_c_left
                  + right_mask_expand * old_c_right)
-        return new_h, new_c
+        selected_h = (select_mask_expand * new_h).sum(1)
+        return new_h, new_c, select_mask, selected_h
 
-    def forward(self, input, length):
+    def forward(self, input, length, return_select_masks=False):
         max_depth = input.size(1)
+        length_mask = basic.sequence_mask(sequence_length=length,
+                                          max_length=max_depth)
+        select_masks = []
 
         if self.use_leaf_rnn:
             hs = []
@@ -138,6 +145,9 @@ class BinaryTreeLSTM(nn.Module):
         else:
             state = basic.apply_nd(fn=self.word_linear, input=input)
             state = state.chunk(num_chunks=2, dim=2)
+        nodes = []
+        if self.intra_attention:
+            nodes.append(state[0])
         for i in range(max_depth - 1):
             h, c = state
             l = (h[:, :-1, :], c[:, :-1, :])
@@ -146,10 +156,37 @@ class BinaryTreeLSTM(nn.Module):
             if i < max_depth - 2:
                 # We don't need to greedily select the composition in the
                 # last iteration, since it has only one option left.
-                new_state = self.select_composition(old_state=state,
-                                                    new_state=new_state)
+                new_h, new_c, select_mask, selected_h = self.select_composition(
+                    old_state=state, new_state=new_state,
+                    mask=length_mask[:, i+1:])
+                new_state = (new_h, new_c)
+                select_masks.append(select_mask)
+                if self.intra_attention:
+                    nodes.append(selected_h)
+            done_mask = length_mask[:, i+1]
             state = self.update_state(old_state=state, new_state=new_state,
-                                      depth=i, length=length)
+                                      done_mask=done_mask)
+            if self.intra_attention and i >= max_depth - 2:
+                nodes.append(state[0])
         h, c = state
+        if self.intra_attention:
+            att_mask = torch.cat([length_mask, length_mask[:, 1:]], dim=1)
+            # nodes: (batch_size, num_tree_nodes, hidden_dim)
+            nodes = torch.cat(nodes, dim=1)
+            att_mask_expand = att_mask.unsqueeze(2).expand_as(nodes)
+            nodes = nodes * att_mask_expand
+            # nodes_mean: (batch_size, hidden_dim, 1)
+            nodes_mean = nodes.mean(1).squeeze(1).unsqueeze(2)
+            # att_weights: (batch_size, num_tree_nodes)
+            att_weights = torch.bmm(nodes, nodes_mean).squeeze(2)
+            att_weights = basic.masked_softmax(
+                logits=att_weights, mask=att_mask)
+            # att_weights_expand: (batch_size, num_tree_nodes, hidden_dim)
+            att_weights_expand = att_weights.unsqueeze(2).expand_as(nodes)
+            # h: (batch_size, 1, 2 * hidden_dim)
+            h = (att_weights_expand * nodes).sum(1)
         assert h.size(1) == 1 and c.size(1) == 1
-        return h.squeeze(1), c.squeeze(1)
+        if not return_select_masks:
+            return h.squeeze(1), c.squeeze(1)
+        else:
+            return h.squeeze(1), c.squeeze(1), select_masks

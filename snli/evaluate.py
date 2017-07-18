@@ -20,6 +20,7 @@ def evaluate(args):
                       clf_hidden_dim=args.clf_hidden_dim,
                       clf_num_layers=args.clf_num_layers,
                       use_leaf_rnn=args.leaf_rnn,
+                      intra_attention=args.intra_attention,
                       use_batchnorm=args.batchnorm,
                       dropout_prob=args.dropout)
     num_params = sum(np.prod(p.size()) for p in model.parameters())
@@ -65,6 +66,7 @@ def main():
     parser.add_argument('--clf-hidden-dim', required=True, type=int)
     parser.add_argument('--clf-num-layers', required=True, type=int)
     parser.add_argument('--leaf-rnn', default=False, action='store_true')
+    parser.add_argument('--intra-attention', default=False, action='store_true')
     parser.add_argument('--batchnorm', default=False, action='store_true')
     parser.add_argument('--dropout', default=0.0, type=float)
     parser.add_argument('--gpu', default=-1, type=int)

@@ -85,7 +85,24 @@ def convert_to_one_hot(indices, num_classes):
     return one_hot
 
 
-def st_gumbel_softmax(logits, temperature=1.0):
+def masked_softmax(logits, mask=None):
+    eps = 1e-20
+    probs = functional.softmax(logits)
+    if mask is not None:
+        mask = mask.float()
+        probs = probs * mask + eps
+        probs = probs / probs.sum(1).expand_as(probs)
+    return probs
+
+
+def greedy_select(logits, mask=None):
+    probs = masked_softmax(logits=logits, mask=mask)
+    one_hot = convert_to_one_hot(indices=probs.max(1)[1].squeeze(1),
+                                 num_classes=logits.size(1))
+    return one_hot
+
+
+def st_gumbel_softmax(logits, temperature=1.0, mask=None):
     """
     Return the result of Straight-Through Gumbel-Softmax Estimation.
     It approximates the discrete sampling via Gumbel-Softmax trick
@@ -99,17 +116,33 @@ def st_gumbel_softmax(logits, temperature=1.0):
             which has the size (batch_size, num_classes)
         temperature (float): A temperature parameter. The higher
             the value is, the smoother the distribution is.
+        mask (Variable, optional): If given, it masks the softmax
+            so that indices of '0' mask values are not selected.
+            The size is (batch_size, num_classes).
 
     Returns:
         y: The sampled output, which has the property explained above.
-
     """
+
     eps = 1e-20
     u = logits.data.new(*logits.size()).uniform_()
     gumbel_noise = Variable(-torch.log(-torch.log(u + eps) + eps))
     y = logits + gumbel_noise
-    y = functional.softmax(y / temperature)
+    y = masked_softmax(logits=y / temperature, mask=mask)
     y_argmax = y.max(1)[1].squeeze(1)
     y_hard = convert_to_one_hot(indices=y_argmax, num_classes=y.size(1)).float()
     y = (y_hard - y).detach() + y
     return y
+
+
+def sequence_mask(sequence_length, max_length=None):
+    if max_length is None:
+        max_length = sequence_length.data.max()
+    batch_size = sequence_length.size(0)
+    seq_range = torch.arange(0, max_length).long()
+    seq_range_expand = seq_range.unsqueeze(0).expand(batch_size, max_length)
+    seq_range_expand = Variable(seq_range_expand)
+    if sequence_length.is_cuda:
+        seq_range_expand = seq_range_expand.cuda()
+    seq_length_expand = sequence_length.unsqueeze(1).expand_as(seq_range_expand)
+    return seq_range_expand < seq_length_expand

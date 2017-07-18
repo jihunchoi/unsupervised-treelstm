@@ -17,7 +17,6 @@ from snli.utils.dataset import SNLIDataset
 from utils.glove import load_glove
 from utils.helper import wrap_with_variable, unwrap_scalar_variable
 
-
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s %(levelname)-8s %(message)s')
 
@@ -45,12 +44,15 @@ def train(args):
                       clf_num_layers=args.clf_num_layers,
                       use_leaf_rnn=args.leaf_rnn,
                       use_batchnorm=args.batchnorm,
+                      intra_attention=args.intra_attention,
                       dropout_prob=args.dropout)
     if args.glove:
         logging.info('Loading GloVe pretrained vectors...')
+        model.word_embedding.weight.data.zero_()
         glove_weight = load_glove(
             path=args.glove, vocab=word_vocab,
             init_weight=model.word_embedding.weight.data.numpy())
+        glove_weight[word_vocab.pad_id] = 0
         model.word_embedding.weight.data.set_(torch.FloatTensor(glove_weight))
     if args.fix_word_embedding:
         logging.info('Will not update word embeddings')
@@ -98,6 +100,7 @@ def train(args):
 
     num_train_batches = len(train_loader)
     validate_every = num_train_batches // 10
+    best_vaild_accuacy = 0
     iter_count = 0
     for epoch_num in range(1, args.max_epoch + 1):
         logging.info(f'Epoch {epoch_num}: start')
@@ -138,11 +141,14 @@ def train(args):
                 logging.info(f'Epoch {progress:.2f}: '
                              f'valid loss = {valid_loss:.4f}, '
                              f'valid accuracy = {valid_accuracy:.4f}')
-                model_filename = (f'model-{progress:.2f}'
-                                  f'-{valid_loss:.4f}'
-                                  f'-{valid_accuracy:.4f}.pkl')
-                model_path = os.path.join(args.save_dir, model_filename)
-                torch.save(model.state_dict(), model_path)
+                if valid_accuracy > best_vaild_accuacy:
+                    best_vaild_accuacy = valid_accuracy
+                    model_filename = (f'model-{progress:.2f}'
+                                      f'-{valid_loss:.4f}'
+                                      f'-{valid_accuracy:.4f}.pkl')
+                    model_path = os.path.join(args.save_dir, model_filename)
+                    torch.save(model.state_dict(), model_path)
+                    print(f'Saved the new best model to {model_path}')
 
 
 def main():
@@ -154,6 +160,7 @@ def main():
     parser.add_argument('--clf-hidden-dim', required=True, type=int)
     parser.add_argument('--clf-num-layers', required=True, type=int)
     parser.add_argument('--leaf-rnn', default=False, action='store_true')
+    parser.add_argument('--intra-attention', default=False, action='store_true')
     parser.add_argument('--batchnorm', default=False, action='store_true')
     parser.add_argument('--dropout', default=0.0, type=float)
     parser.add_argument('--anneal-temperature', default=False,
