@@ -1,8 +1,7 @@
-import math
 import torch
 from torch import nn
 from torch.autograd import Variable
-from torch.nn import init, functional
+from torch.nn import init
 
 from . import basic
 
@@ -171,6 +170,7 @@ class BinaryTreeLSTM(nn.Module):
         h, c = state
         if self.intra_attention:
             att_mask = torch.cat([length_mask, length_mask[:, 1:]], dim=1)
+            att_mask = att_mask.float()
             # nodes: (batch_size, num_tree_nodes, hidden_dim)
             nodes = torch.cat(nodes, dim=1)
             att_mask_expand = att_mask.unsqueeze(2).expand_as(nodes)
