@@ -1,5 +1,7 @@
 # Unsupervised Tree-LSTM w/ Gumbel Softmax
-I believe you can grow up well and become a nice model
+Implementation of the paper [Unsupervised Training of Task-Specific Tree Structures with Tree-LSTMs](https://arxiv.org/abs/1707.02786).
+
+**NOTE**: The code is under frequent change!
 
 ## How to Run
 See ``python -m [task].[operation] --help``
