@@ -91,13 +91,13 @@ def masked_softmax(logits, mask=None):
     if mask is not None:
         mask = mask.float()
         probs = probs * mask + eps
-        probs = probs / probs.sum(1).expand_as(probs)
+        probs = probs / probs.sum(1, keepdim=True)
     return probs
 
 
 def greedy_select(logits, mask=None):
     probs = masked_softmax(logits=logits, mask=mask)
-    one_hot = convert_to_one_hot(indices=probs.max(1)[1].squeeze(1),
+    one_hot = convert_to_one_hot(indices=probs.max(1)[1],
                                  num_classes=logits.size(1))
     return one_hot
 
@@ -129,7 +129,7 @@ def st_gumbel_softmax(logits, temperature=1.0, mask=None):
     gumbel_noise = Variable(-torch.log(-torch.log(u + eps) + eps))
     y = logits + gumbel_noise
     y = masked_softmax(logits=y / temperature, mask=mask)
-    y_argmax = y.max(1)[1].squeeze(1)
+    y_argmax = y.max(1)[1]
     y_hard = convert_to_one_hot(indices=y_argmax, num_classes=y.size(1)).float()
     y = (y_hard - y).detach() + y
     return y

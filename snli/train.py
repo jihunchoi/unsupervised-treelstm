@@ -83,7 +83,7 @@ def train(args):
                                    gpu=args.gpu)
         logits = model(pre=pre, pre_length=pre_length,
                        hyp=hyp, hyp_length=hyp_length)
-        label_pred = logits.max(1)[1].squeeze(1)
+        label_pred = logits.max(1)[1]
         accuracy = torch.eq(label, label_pred).float().mean()
         loss = criterion(input=logits, target=label)
         if is_training:
