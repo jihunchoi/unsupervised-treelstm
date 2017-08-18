@@ -18,6 +18,7 @@ def load_glove(path, vocab, init_weight: np.array):
                 # I think they can be ignored.
                 continue
     glove_weight = np.zeros_like(init_weight)
+    glove_weight[:] = word_vectors[vocab.unk_word]
     for word in word_vectors:
         word_index = vocab.word_to_id(word)
         glove_weight[word_index, :] = word_vectors[word]

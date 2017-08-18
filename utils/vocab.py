@@ -4,11 +4,11 @@ class Vocab(object):
         self._vocab_dict = vocab_dict.copy()
         self._reverse_vocab_dict = dict()
         if add_pad:
-            self.pad_word = '<PAD>'
+            self.pad_word = '<pad>'
             self.pad_id = len(self._vocab_dict)
             self._vocab_dict[self.pad_word] = self.pad_id
         if add_unk:
-            self.unk_word = '<UNK>'
+            self.unk_word = '<unk>'
             self.unk_id = len(self._vocab_dict)
             self._vocab_dict[self.unk_word] = self.unk_id
         for w, i in self._vocab_dict.items():
