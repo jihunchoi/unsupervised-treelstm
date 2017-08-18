@@ -47,7 +47,7 @@ def evaluate(args):
         label = wrap_with_variable(batch['label'], volatile=True,
                                    gpu=args.gpu)
         logits = model(words=words, length=length)
-        label_pred = logits.max(1)[1].squeeze(1)
+        label_pred = logits.max(1)[1]
         num_correct_batch = torch.eq(label, label_pred).long().sum()
         num_correct_batch = unwrap_scalar_variable(num_correct_batch)
         num_correct += num_correct_batch
