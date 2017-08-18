@@ -48,7 +48,7 @@ class SNLIClassifier(nn.Module):
     def forward(self, pre, hyp):
         f1 = pre
         f2 = hyp
-        f3 = pre - hyp
+        f3 = torch.abs(pre - hyp)
         f4 = pre * hyp
         mlp_input = torch.cat([f1, f2, f3, f4], dim=1)
         if self.use_batchnorm:
@@ -88,6 +88,7 @@ class SNLIModel(nn.Module):
             num_classes=num_classes, input_dim=hidden_dim,
             hidden_dim=clf_hidden_dim, num_layers=clf_num_layers,
             use_batchnorm=use_batchnorm, dropout_prob=dropout_prob)
+        self.dropout = nn.Dropout(dropout_prob)
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -98,6 +99,8 @@ class SNLIModel(nn.Module):
     def forward(self, pre, pre_length, hyp, hyp_length):
         pre_embeddings = self.word_embedding(pre)
         hyp_embeddings = self.word_embedding(hyp)
+        pre_embeddings = self.dropout(pre_embeddings)
+        hyp_embeddings = self.dropout(hyp_embeddings)
         pre_h, _ = self.encoder(input=pre_embeddings, length=pre_length)
         hyp_h, _ = self.encoder(input=hyp_embeddings, length=hyp_length)
         logits = self.classifier(pre=pre_h, hyp=hyp_h)
