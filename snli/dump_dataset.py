@@ -11,6 +11,7 @@ def main():
     parser.add_argument('--vocab', required=True)
     parser.add_argument('--vocab-size', required=True, type=int)
     parser.add_argument('--max-length', required=True, type=int)
+    parser.add_argument('--lower', default=False, action='store_true')
     parser.add_argument('--out', required=True)
     args = parser.parse_args()
 
@@ -20,7 +21,7 @@ def main():
     label_vocab = Vocab(vocab_dict=label_dict, add_pad=False, add_unk=False)
     data_reader = SNLIDataset(
         data_path=args.data, word_vocab=word_vocab, label_vocab=label_vocab,
-        max_length=args.max_length)
+        max_length=args.max_length, lower=args.lower)
     with open(args.out, 'wb') as f:
         pickle.dump(data_reader, f)
 

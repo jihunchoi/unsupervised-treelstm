@@ -6,9 +6,10 @@ from torch.utils.data import Dataset
 
 class SNLIDataset(Dataset):
 
-    def __init__(self, data_path, word_vocab, label_vocab, max_length):
+    def __init__(self, data_path, word_vocab, label_vocab, max_length, lower):
         self.word_vocab = word_vocab
         self.label_vocab = label_vocab
+        self.lower = lower
         self._max_length = max_length
         self._data = []
         with jsonlines.open(data_path, 'r') as reader:
@@ -18,8 +19,13 @@ class SNLIDataset(Dataset):
                     self._data.append(converted)
 
     def _convert_obj(self, obj):
-        pre_words = word_tokenize(obj['sentence1'].lower())
-        hyp_words = word_tokenize(obj['sentence2'].lower())
+        pre_sentence = obj['sentence1']
+        hyp_sentence = obj['sentence2']
+        if self.lower:
+            pre_sentence = pre_sentence.lower()
+            hyp_sentence = hyp_sentence.lower()
+        pre_words = word_tokenize(pre_sentence)
+        hyp_words = word_tokenize(hyp_sentence)
         pre = [self.word_vocab.word_to_id(w) for w in pre_words]
         hyp = [self.word_vocab.word_to_id(w) for w in hyp_words]
         pre_length = len(pre)

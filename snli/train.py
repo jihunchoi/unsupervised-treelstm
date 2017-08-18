@@ -48,7 +48,6 @@ def train(args):
                       dropout_prob=args.dropout)
     if args.glove:
         logging.info('Loading GloVe pretrained vectors...')
-        model.word_embedding.weight.data.zero_()
         glove_weight = load_glove(
             path=args.glove, vocab=word_vocab,
             init_weight=model.word_embedding.weight.data.numpy())
@@ -61,7 +60,7 @@ def train(args):
         logging.info(f'Using GPU {args.gpu}')
         model.cuda(args.gpu)
     params = [p for p in model.parameters() if p.requires_grad]
-    optimizer = optim.Adam(params=params)
+    optimizer = optim.Adam(lr=args.lr, params=params)
     criterion = nn.CrossEntropyLoss()
 
     train_summary_writer = tensorboard.FileWriter(
@@ -99,15 +98,19 @@ def train(args):
         summary_writer.add_summary(summary=summ, global_step=step)
 
     num_train_batches = len(train_loader)
-    validate_every = num_train_batches // 10
+    validate_every = num_train_batches // 20
     best_vaild_accuacy = 0
     iter_count = 0
     for epoch_num in range(1, args.max_epoch + 1):
+        if epoch_num > 1 and (epoch_num - 1) % args.halve_lr_every == 0:
+            for param_group in optimizer.param_groups:
+                param_group['lr'] /= 2
+                print(f'Halved learning rate to: {param_group["lr"]}')
         logging.info(f'Epoch {epoch_num}: start')
         for batch_iter, train_batch in enumerate(train_loader):
-            if args.anneal_temperature and iter_count % 500 == 0:
-                gamma = 0.00001
-                new_temperature = max([0.5, math.exp(-gamma * iter_count)])
+            if iter_count % args.anneal_temperature_every == 0:
+                rate = args.anneal_temperature_rate
+                new_temperature = max([0.5, math.exp(-rate * iter_count)])
                 model.encoder.gumbel_temperature = new_temperature
                 logging.info(f'Iter #{iter_count}: '
                              f'Set Gumbel temperature to {new_temperature:.4f}')
@@ -163,8 +166,8 @@ def main():
     parser.add_argument('--intra-attention', default=False, action='store_true')
     parser.add_argument('--batchnorm', default=False, action='store_true')
     parser.add_argument('--dropout', default=0.0, type=float)
-    parser.add_argument('--anneal-temperature', default=False,
-                        action='store_true')
+    parser.add_argument('--anneal-temperature-every', default=1e10, type=int)
+    parser.add_argument('--anneal-temperature-rate', default=0, type=float)
     parser.add_argument('--glove', default=None)
     parser.add_argument('--fix-word-embedding', default=False,
                         action='store_true')
@@ -172,6 +175,8 @@ def main():
     parser.add_argument('--batch-size', required=True, type=int)
     parser.add_argument('--max-epoch', required=True, type=int)
     parser.add_argument('--save-dir', required=True)
+    parser.add_argument('--lr', default=0.001, type=float)
+    parser.add_argument('--halve-lr-every', default=99999, type=int)
     args = parser.parse_args()
     train(args)
 
