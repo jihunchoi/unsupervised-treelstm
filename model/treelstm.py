@@ -46,22 +46,33 @@ class BinaryTreeLSTMLayer(nn.Module):
 class BinaryTreeLSTM(nn.Module):
 
     def __init__(self, word_dim, hidden_dim, use_leaf_rnn, intra_attention,
-                 gumbel_temperature):
+                 gumbel_temperature, bidirectional):
         super(BinaryTreeLSTM, self).__init__()
         self.word_dim = word_dim
         self.hidden_dim = hidden_dim
         self.use_leaf_rnn = use_leaf_rnn
         self.intra_attention = intra_attention
         self.gumbel_temperature = gumbel_temperature
+        self.bidirectional = bidirectional
+
+        assert not (self.bidirectional and not self.use_leaf_rnn)
 
         if use_leaf_rnn:
             self.leaf_rnn_cell = nn.LSTMCell(
                 input_size=word_dim, hidden_size=hidden_dim)
+            if bidirectional:
+                self.leaf_rnn_cell_bw = nn.LSTMCell(
+                    input_size=word_dim, hidden_size=hidden_dim)
         else:
             self.word_linear = nn.Linear(in_features=word_dim,
                                          out_features=2 * hidden_dim)
-        self.treelstm_layer = BinaryTreeLSTMLayer(hidden_dim)
-        self.comp_query = nn.Parameter(torch.FloatTensor(hidden_dim))
+        if self.bidirectional:
+            self.treelstm_layer = BinaryTreeLSTMLayer(2 * hidden_dim)
+            self.comp_query = nn.Parameter(torch.FloatTensor(2 * hidden_dim))
+        else:
+            self.treelstm_layer = BinaryTreeLSTMLayer(hidden_dim)
+            self.comp_query = nn.Parameter(torch.FloatTensor(hidden_dim))
+
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -72,6 +83,13 @@ class BinaryTreeLSTM(nn.Module):
             init.constant(self.leaf_rnn_cell.bias_hh.data, val=0)
             # Set forget bias to 1
             self.leaf_rnn_cell.bias_ih.data.chunk(4)[1].fill_(1)
+            if self.bidirectional:
+                init.kaiming_normal(self.leaf_rnn_cell_bw.weight_ih.data)
+                init.orthogonal(self.leaf_rnn_cell_bw.weight_hh.data)
+                init.constant(self.leaf_rnn_cell_bw.bias_ih.data, val=0)
+                init.constant(self.leaf_rnn_cell_bw.bias_hh.data, val=0)
+                # Set forget bias to 1
+                self.leaf_rnn_cell_bw.bias_ih.data.chunk(4)[1].fill_(1)
         else:
             init.kaiming_normal(self.word_linear.weight.data)
             init.constant(self.word_linear.bias.data, val=0)
@@ -140,6 +158,29 @@ class BinaryTreeLSTM(nn.Module):
                 c_prev = c
             hs = torch.stack(hs, dim=1)
             cs = torch.stack(cs, dim=1)
+
+            if self.bidirectional:
+                hs_bw = []
+                cs_bw = []
+                h_bw_prev = c_bw_prev = zero_state
+                lengths_list = list(length.data)
+                input_bw = basic.reverse_padded_sequence(
+                    inputs=input, lengths=lengths_list, batch_first=True)
+                for i in range(max_length):
+                    h_bw, c_bw = self.leaf_rnn_cell_bw(
+                        input=input_bw[:, i, :], hx=(h_bw_prev, c_bw_prev))
+                    hs_bw.append(h_bw)
+                    cs_bw.append(c_bw)
+                    h_bw_prev = h_bw
+                    c_bw_prev = c_bw
+                hs_bw = torch.stack(hs_bw, dim=1)
+                cs_bw = torch.stack(cs_bw, dim=1)
+                hs_bw = basic.reverse_padded_sequence(
+                    inputs=hs_bw, lengths=lengths_list, batch_first=True)
+                cs_bw = basic.reverse_padded_sequence(
+                    inputs=cs_bw, lengths=lengths_list, batch_first=True)
+                hs = torch.cat([hs, hs_bw], dim=2)
+                cs = torch.cat([cs, cs_bw], dim=2)
             state = (hs, cs)
         else:
             state = basic.apply_nd(fn=self.word_linear, input=input)

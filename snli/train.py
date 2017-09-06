@@ -10,6 +10,7 @@ from tensorboard import summary
 import torch
 from torch import nn, optim
 from torch.nn.utils import clip_grad_norm
+from torch.optim import lr_scheduler
 from torch.utils.data import DataLoader
 
 from snli.model import SNLIModel
@@ -45,7 +46,8 @@ def train(args):
                       use_leaf_rnn=args.leaf_rnn,
                       use_batchnorm=args.batchnorm,
                       intra_attention=args.intra_attention,
-                      dropout_prob=args.dropout)
+                      dropout_prob=args.dropout,
+                      bidirectional=args.bidirectional)
     if args.glove:
         logging.info('Loading GloVe pretrained vectors...')
         glove_weight = load_glove(
@@ -59,8 +61,16 @@ def train(args):
     if args.gpu > -1:
         logging.info(f'Using GPU {args.gpu}')
         model.cuda(args.gpu)
+    if args.optimizer == 'adam':
+        optimizer_class = optim.Adam
+    elif args.optimizer == 'adagrad':
+        optimizer_class = optim.Adagrad
+    elif args.optimizer == 'adadelta':
+        optimizer_class = optim.Adadelta
     params = [p for p in model.parameters() if p.requires_grad]
-    optimizer = optim.Adam(lr=args.lr, params=params)
+    optimizer = optimizer_class(params=params, weight_decay=args.l2reg)
+    scheduler = lr_scheduler.ReduceLROnPlateau(
+        optimizer=optimizer, mode='max', factor=0.5, patience=10, verbose=True)
     criterion = nn.CrossEntropyLoss()
 
     train_summary_writer = tensorboard.FileWriter(
@@ -98,14 +108,10 @@ def train(args):
         summary_writer.add_summary(summary=summ, global_step=step)
 
     num_train_batches = len(train_loader)
-    validate_every = num_train_batches // 20
+    validate_every = num_train_batches // 10
     best_vaild_accuacy = 0
     iter_count = 0
     for epoch_num in range(1, args.max_epoch + 1):
-        if epoch_num > 1 and (epoch_num - 1) % args.halve_lr_every == 0:
-            for param_group in optimizer.param_groups:
-                param_group['lr'] /= 2
-                print(f'Halved learning rate to: {param_group["lr"]}')
         logging.info(f'Epoch {epoch_num}: start')
         for batch_iter, train_batch in enumerate(train_loader):
             if iter_count % args.anneal_temperature_every == 0:
@@ -134,6 +140,7 @@ def train(args):
                     valid_accuracy_sum += unwrap_scalar_variable(valid_accuracy)
                 valid_loss = valid_loss_sum / num_valid_batches
                 valid_accuracy = valid_accuracy_sum / num_valid_batches
+                scheduler.step(valid_accuracy)
                 add_scalar_summary(
                     summary_writer=valid_summary_writer,
                     name='loss', value=valid_loss, step=iter_count)
@@ -163,6 +170,7 @@ def main():
     parser.add_argument('--clf-hidden-dim', required=True, type=int)
     parser.add_argument('--clf-num-layers', required=True, type=int)
     parser.add_argument('--leaf-rnn', default=False, action='store_true')
+    parser.add_argument('--bidirectional', default=False, action='store_true')
     parser.add_argument('--intra-attention', default=False, action='store_true')
     parser.add_argument('--batchnorm', default=False, action='store_true')
     parser.add_argument('--dropout', default=0.0, type=float)
@@ -175,8 +183,9 @@ def main():
     parser.add_argument('--batch-size', required=True, type=int)
     parser.add_argument('--max-epoch', required=True, type=int)
     parser.add_argument('--save-dir', required=True)
-    parser.add_argument('--lr', default=0.001, type=float)
-    parser.add_argument('--halve-lr-every', default=99999, type=int)
+    parser.add_argument('--lr', default=None, type=float)
+    parser.add_argument('--optimizer', default='adam')
+    parser.add_argument('--l2reg', default=0, type=float)
     args = parser.parse_args()
     train(args)
 

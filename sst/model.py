@@ -41,8 +41,7 @@ class SSTClassifier(nn.Module):
             linear_layer = self.mlp[i][0]
             init.kaiming_normal(linear_layer.weight.data)
             init.constant(linear_layer.bias.data, val=0)
-        init.uniform(self.clf_linear.weight.data, -0.005, 0.005)
-        init.kaiming_normal(self.clf_linear.weight.data)
+        init.uniform(self.clf_linear.weight.data, -0.002, 0.002)
         init.constant(self.clf_linear.bias.data, val=0)
 
     def forward(self, sentence):
@@ -61,7 +60,7 @@ class SSTClassifier(nn.Module):
 class SSTModel(nn.Module):
 
     def __init__(self, num_classes, num_words, word_dim, hidden_dim,
-                 clf_hidden_dim, clf_num_layers, use_leaf_rnn, use_leaf_birnn,
+                 clf_hidden_dim, clf_num_layers, use_leaf_rnn, bidirectional,
                  intra_attention, use_batchnorm, dropout_prob):
         super(SSTModel, self).__init__()
         self.num_classes = num_classes
@@ -70,7 +69,7 @@ class SSTModel(nn.Module):
         self.clf_hidden_dim = clf_hidden_dim
         self.clf_num_layers = clf_num_layers
         self.use_leaf_rnn = use_leaf_rnn
-        self.use_leaf_birnn = use_leaf_birnn
+        self.bidirectional = bidirectional
         self.intra_attention = intra_attention
         self.use_batchnorm = use_batchnorm
         self.dropout_prob = dropout_prob
@@ -80,9 +79,9 @@ class SSTModel(nn.Module):
                                            embedding_dim=word_dim)
         self.encoder = BinaryTreeLSTM(word_dim=word_dim, hidden_dim=hidden_dim,
                                       use_leaf_rnn=use_leaf_rnn,
-                                      use_leaf_birnn=use_leaf_birnn,
                                       intra_attention=intra_attention,
-                                      gumbel_temperature=1)
+                                      gumbel_temperature=1,
+                                      bidirectional=bidirectional)
         self.classifier = SSTClassifier(
             num_classes=num_classes, input_dim=hidden_dim,
             hidden_dim=clf_hidden_dim, num_layers=clf_num_layers,

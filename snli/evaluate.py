@@ -22,7 +22,8 @@ def evaluate(args):
                       use_leaf_rnn=args.leaf_rnn,
                       intra_attention=args.intra_attention,
                       use_batchnorm=args.batchnorm,
-                      dropout_prob=args.dropout)
+                      dropout_prob=args.dropout,
+                      bidirectional=args.bidirectional)
     num_params = sum(np.prod(p.size()) for p in model.parameters())
     num_embedding_params = np.prod(model.word_embedding.weight.size())
     print(f'# of parameters: {num_params}')
@@ -66,6 +67,7 @@ def main():
     parser.add_argument('--clf-hidden-dim', required=True, type=int)
     parser.add_argument('--clf-num-layers', required=True, type=int)
     parser.add_argument('--leaf-rnn', default=False, action='store_true')
+    parser.add_argument('--bidirectional', default=False, action='store_true')
     parser.add_argument('--intra-attention', default=False, action='store_true')
     parser.add_argument('--batchnorm', default=False, action='store_true')
     parser.add_argument('--dropout', default=0.0, type=float)

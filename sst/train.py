@@ -4,12 +4,12 @@ import os
 import pickle
 from functools import partial
 
-import math
 import tensorboard
 from tensorboard import summary
 
 import torch
 from torch import nn, optim
+from torch.optim import lr_scheduler
 from torch.nn.utils import clip_grad_norm
 from torch.utils.data import DataLoader
 
@@ -46,7 +46,7 @@ def train(args):
                      clf_hidden_dim=args.clf_hidden_dim,
                      clf_num_layers=args.clf_num_layers,
                      use_leaf_rnn=args.leaf_rnn,
-                     use_leaf_birnn=args.leaf_birnn,
+                     bidirectional=args.bidirectional,
                      intra_attention=args.intra_attention,
                      use_batchnorm=args.batchnorm,
                      dropout_prob=args.dropout)
@@ -65,7 +65,16 @@ def train(args):
         logging.info(f'Using GPU {args.gpu}')
         model.cuda(args.gpu)
     params = [p for p in model.parameters() if p.requires_grad]
-    optimizer = optim.Adam(params=params, weight_decay=args.l2reg)
+    if args.optimizer == 'adam':
+        optimizer_class = optim.Adam
+    elif args.optimizer == 'adagrad':
+        optimizer_class = optim.Adagrad
+    elif args.optimizer == 'adadelta':
+        optimizer_class = optim.Adadelta
+    optimizer = optimizer_class(params=params, weight_decay=args.l2reg)
+    scheduler = lr_scheduler.ReduceLROnPlateau(
+        optimizer=optimizer, mode='max', factor=0.5, patience=10000000,
+        verbose=True)
     criterion = nn.CrossEntropyLoss()
 
     train_summary_writer = tensorboard.FileWriter(
@@ -98,18 +107,12 @@ def train(args):
         summary_writer.add_summary(summary=summ, global_step=step)
 
     num_train_batches = len(train_loader)
-    validate_every = num_train_batches // 10
+    validate_every = num_train_batches // 20
     best_vaild_accuacy = 0
     iter_count = 0
     for epoch_num in range(1, args.max_epoch + 1):
         logging.info(f'Epoch {epoch_num}: start')
         for batch_iter, train_batch in enumerate(train_loader):
-            if args.anneal_temperature and iter_count % 50 == 0:
-                gamma = 0.001
-                new_temperature = max([0.5, math.exp(-gamma * iter_count)])
-                model.encoder.gumbel_temperature = new_temperature
-                logging.info(f'Iter #{iter_count}: '
-                             f'Set Gumbel temperature to {new_temperature:.4f}')
             train_loss, train_accuracy = run_iter(
                 batch=train_batch, is_training=True)
             iter_count += 1
@@ -136,6 +139,7 @@ def train(args):
                 add_scalar_summary(
                     summary_writer=valid_summary_writer,
                     name='accuracy', value=valid_accuracy, step=iter_count)
+                scheduler.step(valid_accuracy)
                 progress = epoch_num + batch_iter/num_train_batches
                 logging.info(f'Epoch {progress:.2f}: '
                              f'valid loss = {valid_loss:.4f}, '
@@ -159,13 +163,11 @@ def main():
     parser.add_argument('--clf-hidden-dim', required=True, type=int)
     parser.add_argument('--clf-num-layers', required=True, type=int)
     parser.add_argument('--leaf-rnn', default=False, action='store_true')
-    parser.add_argument('--leaf-birnn', default=False, action='store_true')
+    parser.add_argument('--bidirectional', default=False, action='store_true')
     parser.add_argument('--intra-attention', default=False, action='store_true')
     parser.add_argument('--batchnorm', default=False, action='store_true')
     parser.add_argument('--dropout', default=0.0, type=float)
     parser.add_argument('--l2reg', default=0.0, type=float)
-    parser.add_argument('--anneal-temperature', default=False,
-                        action='store_true')
     parser.add_argument('--glove', default=None)
     parser.add_argument('--fix-word-embedding', default=False,
                         action='store_true')
@@ -174,6 +176,7 @@ def main():
     parser.add_argument('--max-epoch', required=True, type=int)
     parser.add_argument('--save-dir', required=True)
     parser.add_argument('--omit-prob', default=0.0, type=float)
+    parser.add_argument('--optimizer', default='adam')
     args = parser.parse_args()
     train(args)
 
