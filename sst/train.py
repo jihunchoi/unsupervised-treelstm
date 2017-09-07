@@ -1,8 +1,6 @@
 import argparse
 import logging
 import os
-import pickle
-from functools import partial
 
 import tensorboard
 from tensorboard import summary
@@ -11,11 +9,9 @@ import torch
 from torch import nn, optim
 from torch.optim import lr_scheduler
 from torch.nn.utils import clip_grad_norm
-from torch.utils.data import DataLoader
+from torchtext import data, datasets
 
 from sst.model import SSTModel
-from sst.utils.dataset import SSTDataset
-from utils.glove import load_glove
 from utils.helper import wrap_with_variable, unwrap_scalar_variable
 
 
@@ -24,24 +20,28 @@ logging.basicConfig(level=logging.INFO,
 
 
 def train(args):
-    with open(args.train_data, 'rb') as f:
-        train_dataset: SSTDataset = pickle.load(f)
-    with open(args.valid_data, 'rb') as f:
-        valid_dataset: SSTDataset = pickle.load(f)
+    text_field = data.Field(lower=True, include_lengths=True, batch_first=True)
+    label_field = data.Field(sequential=False)
 
-    train_collate_fn = partial(train_dataset.collate, omit_prob=args.omit_prob)
-    train_loader = DataLoader(dataset=train_dataset, batch_size=args.batch_size,
-                              shuffle=True, num_workers=2,
-                              collate_fn=train_collate_fn,
-                              pin_memory=True)
-    valid_loader = DataLoader(dataset=valid_dataset, batch_size=args.batch_size,
-                              shuffle=False, num_workers=2,
-                              collate_fn=valid_dataset.collate,
-                              pin_memory=True)
-    word_vocab = train_dataset.word_vocab
+    filter_pred = None
+    if not args.fine_grained:
+        filter_pred = lambda ex: ex.label != 'neutral'
+    dataset_splits = datasets.SST.splits(
+        root='./data/sst', text_field=text_field, label_field=label_field,
+        fine_grained=args.fine_grained, train_subtrees=True,
+        filter_pred=filter_pred)
 
-    num_classes = train_dataset.num_classes
-    model = SSTModel(num_classes=num_classes, num_words=len(word_vocab),
+    text_field.build_vocab(*dataset_splits, vectors=args.pretrained)
+    label_field.build_vocab(*dataset_splits)
+
+    logging.info(f'Initialize with pretrained vectors: {args.pretrained}')
+    logging.info(f'Number of classes: {len(label_field.vocab)}')
+
+    train_loader, valid_loader, _ = data.BucketIterator.splits(
+        datasets=dataset_splits, batch_size=args.batch_size, device=args.gpu)
+
+    num_classes = len(label_field.vocab)
+    model = SSTModel(num_classes=num_classes, num_words=len(text_field.vocab),
                      word_dim=args.word_dim, hidden_dim=args.hidden_dim,
                      clf_hidden_dim=args.clf_hidden_dim,
                      clf_num_layers=args.clf_num_layers,
@@ -50,14 +50,8 @@ def train(args):
                      intra_attention=args.intra_attention,
                      use_batchnorm=args.batchnorm,
                      dropout_prob=args.dropout)
-    if args.glove:
-        logging.info('Loading GloVe pretrained vectors...')
-        model.word_embedding.weight.data.zero_()
-        glove_weight = load_glove(
-            path=args.glove, vocab=word_vocab,
-            init_weight=model.word_embedding.weight.data.numpy())
-        glove_weight[word_vocab.pad_id] = 0
-        model.word_embedding.weight.data.set_(torch.FloatTensor(glove_weight))
+    if args.pretrained:
+        model.word_embedding.weight.data.set_(text_field.vocab.vectors)
     if args.fix_word_embedding:
         logging.info('Will not update word embeddings')
         model.word_embedding.weight.requires_grad = False
@@ -73,8 +67,8 @@ def train(args):
         optimizer_class = optim.Adadelta
     optimizer = optimizer_class(params=params, weight_decay=args.l2reg)
     scheduler = lr_scheduler.ReduceLROnPlateau(
-        optimizer=optimizer, mode='max', factor=0.5, patience=10000000,
-        verbose=True)
+        optimizer=optimizer, mode='max', factor=0.5,
+        patience=20 * args.halve_lr_every, verbose=True)
     criterion = nn.CrossEntropyLoss()
 
     train_summary_writer = tensorboard.FileWriter(
@@ -84,12 +78,10 @@ def train(args):
 
     def run_iter(batch, is_training):
         model.train(is_training)
-        words = wrap_with_variable(batch['words'], volatile=not is_training,
-                                   gpu=args.gpu)
-        length = wrap_with_variable(batch['length'], volatile=not is_training,
+        words, length = batch.text
+        label = batch.label
+        length = wrap_with_variable(batch.text[1], volatile=not is_training,
                                     gpu=args.gpu)
-        label = wrap_with_variable(batch['label'], volatile=not is_training,
-                                   gpu=args.gpu)
         logits = model(words=words, length=length)
         label_pred = logits.max(1)[1]
         accuracy = torch.eq(label, label_pred).float().mean()
@@ -110,54 +102,52 @@ def train(args):
     validate_every = num_train_batches // 20
     best_vaild_accuacy = 0
     iter_count = 0
-    for epoch_num in range(1, args.max_epoch + 1):
-        logging.info(f'Epoch {epoch_num}: start')
-        for batch_iter, train_batch in enumerate(train_loader):
-            train_loss, train_accuracy = run_iter(
-                batch=train_batch, is_training=True)
-            iter_count += 1
-            add_scalar_summary(
-                summary_writer=train_summary_writer,
-                name='loss', value=train_loss, step=iter_count)
-            add_scalar_summary(
-                summary_writer=train_summary_writer,
-                name='accuracy', value=train_accuracy, step=iter_count)
+    for batch_iter, train_batch in enumerate(train_loader):
+        train_loss, train_accuracy = run_iter(
+            batch=train_batch, is_training=True)
+        iter_count += 1
+        add_scalar_summary(
+            summary_writer=train_summary_writer,
+            name='loss', value=train_loss, step=iter_count)
+        add_scalar_summary(
+            summary_writer=train_summary_writer,
+            name='accuracy', value=train_accuracy, step=iter_count)
 
-            if (batch_iter + 1) % validate_every == 0:
-                valid_loss_sum = valid_accuracy_sum = 0
-                num_valid_batches = len(valid_loader)
-                for valid_batch in valid_loader:
-                    valid_loss, valid_accuracy = run_iter(
-                        batch=valid_batch, is_training=False)
-                    valid_loss_sum += unwrap_scalar_variable(valid_loss)
-                    valid_accuracy_sum += unwrap_scalar_variable(valid_accuracy)
-                valid_loss = valid_loss_sum / num_valid_batches
-                valid_accuracy = valid_accuracy_sum / num_valid_batches
-                add_scalar_summary(
-                    summary_writer=valid_summary_writer,
-                    name='loss', value=valid_loss, step=iter_count)
-                add_scalar_summary(
-                    summary_writer=valid_summary_writer,
-                    name='accuracy', value=valid_accuracy, step=iter_count)
-                scheduler.step(valid_accuracy)
-                progress = epoch_num + batch_iter/num_train_batches
-                logging.info(f'Epoch {progress:.2f}: '
-                             f'valid loss = {valid_loss:.4f}, '
-                             f'valid accuracy = {valid_accuracy:.4f}')
-                if valid_accuracy > best_vaild_accuacy:
-                    best_vaild_accuacy = valid_accuracy
-                    model_filename = (f'model-{progress:.2f}'
-                                      f'-{valid_loss:.4f}'
-                                      f'-{valid_accuracy:.4f}.pkl')
-                    model_path = os.path.join(args.save_dir, model_filename)
-                    torch.save(model.state_dict(), model_path)
-                    print(f'Saved the new best model to {model_path}')
+        if (batch_iter + 1) % validate_every == 0:
+            valid_loss_sum = valid_accuracy_sum = 0
+            num_valid_batches = len(valid_loader)
+            for valid_batch in valid_loader:
+                valid_loss, valid_accuracy = run_iter(
+                    batch=valid_batch, is_training=False)
+                valid_loss_sum += unwrap_scalar_variable(valid_loss)
+                valid_accuracy_sum += unwrap_scalar_variable(valid_accuracy)
+            valid_loss = valid_loss_sum / num_valid_batches
+            valid_accuracy = valid_accuracy_sum / num_valid_batches
+            add_scalar_summary(
+                summary_writer=valid_summary_writer,
+                name='loss', value=valid_loss, step=iter_count)
+            add_scalar_summary(
+                summary_writer=valid_summary_writer,
+                name='accuracy', value=valid_accuracy, step=iter_count)
+            scheduler.step(valid_accuracy)
+            progress = train_loader.epoch
+            logging.info(f'Epoch {progress:.2f}: '
+                         f'valid loss = {valid_loss:.4f}, '
+                         f'valid accuracy = {valid_accuracy:.4f}')
+            if valid_accuracy > best_vaild_accuacy:
+                best_vaild_accuacy = valid_accuracy
+                model_filename = (f'model-{progress:.2f}'
+                                  f'-{valid_loss:.4f}'
+                                  f'-{valid_accuracy:.4f}.pkl')
+                model_path = os.path.join(args.save_dir, model_filename)
+                torch.save(model.state_dict(), model_path)
+                print(f'Saved the new best model to {model_path}')
+            if progress > args.max_epoch:
+                break
 
 
 def main():
     parser = argparse.ArgumentParser(fromfile_prefix_chars='@')
-    parser.add_argument('--train-data', required=True)
-    parser.add_argument('--valid-data', required=True)
     parser.add_argument('--word-dim', required=True, type=int)
     parser.add_argument('--hidden-dim', required=True, type=int)
     parser.add_argument('--clf-hidden-dim', required=True, type=int)
@@ -168,7 +158,7 @@ def main():
     parser.add_argument('--batchnorm', default=False, action='store_true')
     parser.add_argument('--dropout', default=0.0, type=float)
     parser.add_argument('--l2reg', default=0.0, type=float)
-    parser.add_argument('--glove', default=None)
+    parser.add_argument('--pretrained', default=None)
     parser.add_argument('--fix-word-embedding', default=False,
                         action='store_true')
     parser.add_argument('--gpu', default=-1, type=int)
@@ -177,6 +167,8 @@ def main():
     parser.add_argument('--save-dir', required=True)
     parser.add_argument('--omit-prob', default=0.0, type=float)
     parser.add_argument('--optimizer', default='adam')
+    parser.add_argument('--fine-grained', default=False, action='store_true')
+    parser.add_argument('--halve-lr-every', default=2, type=int)
     args = parser.parse_args()
     train(args)
 
