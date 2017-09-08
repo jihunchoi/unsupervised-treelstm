@@ -86,8 +86,12 @@ class SNLIModel(nn.Module):
                                       intra_attention=intra_attention,
                                       gumbel_temperature=1,
                                       bidirectional=bidirectional)
+        if bidirectional:
+            clf_input_dim = 2 * hidden_dim
+        else:
+            clf_input_dim = hidden_dim
         self.classifier = SNLIClassifier(
-            num_classes=num_classes, input_dim=hidden_dim,
+            num_classes=num_classes, input_dim=clf_input_dim,
             hidden_dim=clf_hidden_dim, num_layers=clf_num_layers,
             use_batchnorm=use_batchnorm, dropout_prob=dropout_prob)
         self.dropout = nn.Dropout(dropout_prob)
