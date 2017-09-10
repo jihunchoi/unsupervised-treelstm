@@ -20,7 +20,8 @@ logging.basicConfig(level=logging.INFO,
 
 
 def train(args):
-    text_field = data.Field(lower=True, include_lengths=True, batch_first=True)
+    text_field = data.Field(lower=args.lower, include_lengths=True,
+                            batch_first=True)
     label_field = data.Field(sequential=False)
 
     filter_pred = None
@@ -169,6 +170,7 @@ def main():
     parser.add_argument('--optimizer', default='adam')
     parser.add_argument('--fine-grained', default=False, action='store_true')
     parser.add_argument('--halve-lr-every', default=2, type=int)
+    parser.add_argument('--lower', default=True, action='store_true')
     args = parser.parse_args()
     train(args)
 

@@ -1,9 +1,7 @@
 import argparse
-import pickle
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader
 from torchtext import data, datasets
 
 from sst.model import SSTModel
@@ -11,7 +9,8 @@ from utils.helper import wrap_with_variable, unwrap_scalar_variable
 
 
 def evaluate(args):
-    text_field = data.Field(lower=True, include_lengths=True, batch_first=True)
+    text_field = data.Field(lower=args.lower, include_lengths=True,
+                            batch_first=True)
     label_field = data.Field(sequential=False)
 
     filter_pred = None
@@ -82,6 +81,7 @@ def main():
     parser.add_argument('--batch-size', default=128, type=int)
     parser.add_argument('--bidirectional', default=False, action='store_true')
     parser.add_argument('--fine-grained', default=False, action='store_true')
+    parser.add_argument('--lower', default=False, action='store_true')
     args = parser.parse_args()
     evaluate(args)
 
