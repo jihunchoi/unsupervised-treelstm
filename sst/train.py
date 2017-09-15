@@ -170,7 +170,7 @@ def main():
     parser.add_argument('--optimizer', default='adam')
     parser.add_argument('--fine-grained', default=False, action='store_true')
     parser.add_argument('--halve-lr-every', default=2, type=int)
-    parser.add_argument('--lower', default=True, action='store_true')
+    parser.add_argument('--lower', default=False, action='store_true')
     args = parser.parse_args()
     train(args)
 

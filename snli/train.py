@@ -111,7 +111,7 @@ def train(args):
     validate_every = num_train_batches // 10
     best_vaild_accuacy = 0
     iter_count = 0
-    for epoch_num in range(1, args.max_epoch + 1):
+    for epoch_num in range(args.max_epoch):
         logging.info(f'Epoch {epoch_num}: start')
         for batch_iter, train_batch in enumerate(train_loader):
             if iter_count % args.anneal_temperature_every == 0:
