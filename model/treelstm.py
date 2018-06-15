@@ -122,10 +122,12 @@ class BinaryTreeLSTM(nn.Module):
         select_mask_cumsum = select_mask.cumsum(1)
         left_mask = 1 - select_mask_cumsum
         left_mask_expand = left_mask.unsqueeze(2).expand_as(old_h_left)
-        right_mask_leftmost_col = Variable(
-            select_mask_cumsum.data.new(new_h.size(0), 1).zero_())
-        right_mask = torch.cat(
-            [right_mask_leftmost_col, select_mask_cumsum[:, :-1]], dim=1)
+        # right_mask_leftmost_col = Variable(
+        #     select_mask_cumsum.data.new(new_h.size(0), 1).zero_())
+        # right_mask = torch.cat(
+        #     [right_mask_leftmost_col, select_mask_cumsum[:, :-1]], dim=1)
+        # The simple way to make right_mask suggested by haichao592
+        right_mask = select_mask_cumsum - select_mask
         right_mask_expand = right_mask.unsqueeze(2).expand_as(old_h_right)
         new_h = (select_mask_expand * new_h
                  + left_mask_expand * old_h_left
