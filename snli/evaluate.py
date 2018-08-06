@@ -7,7 +7,6 @@ from torch.utils.data import DataLoader
 
 from snli.model import SNLIModel
 from snli.utils.dataset import SNLIDataset
-from utils.helper import wrap_with_variable, unwrap_scalar_variable
 
 
 def evaluate(args):
@@ -30,28 +29,26 @@ def evaluate(args):
     print(f'# of word embedding parameters: {num_embedding_params}')
     print(f'# of parameters (excluding word embeddings): '
           f'{num_params - num_embedding_params}')
-    model.load_state_dict(torch.load(args.model))
+    model.load_state_dict(torch.load(args.model, map_location='cpu'))
     model.eval()
-    if args.gpu > -1:
-        model.cuda(args.gpu)
+    model.to(args.device)
+    torch.set_grad_enabled(False)
     test_data_loader = DataLoader(dataset=test_dataset,
                                   batch_size=args.batch_size,
                                   collate_fn=test_dataset.collate)
     num_correct = 0
     num_data = len(test_dataset)
     for batch in test_data_loader:
-        pre = wrap_with_variable(batch['pre'], volatile=True, gpu=args.gpu)
-        hyp = wrap_with_variable(batch['hyp'], volatile=True, gpu=args.gpu)
-        pre_length = wrap_with_variable(batch['pre_length'], volatile=True,
-                                        gpu=args.gpu)
-        hyp_length = wrap_with_variable(batch['hyp_length'], volatile=True,
-                                        gpu=args.gpu)
-        label = wrap_with_variable(batch['label'], volatile=True, gpu=args.gpu)
+        pre = batch['pre'].to(args.device)
+        hyp = batch['hyp'].to(args.device)
+        pre_length = batch['pre_length'].to(args.device)
+        hyp_length = batch['hyp_length'].to(args.device)
+        label = batch['label'].to(args.device)
         logits = model(pre=pre, pre_length=pre_length,
                        hyp=hyp, hyp_length=hyp_length)
         label_pred = logits.max(1)[1]
         num_correct_batch = torch.eq(label, label_pred).long().sum()
-        num_correct_batch = unwrap_scalar_variable(num_correct_batch)
+        num_correct_batch = num_correct_batch.item()
         num_correct += num_correct_batch
     print(f'# data: {num_data}')
     print(f'# correct: {num_correct}')
@@ -71,7 +68,7 @@ def main():
     parser.add_argument('--intra-attention', default=False, action='store_true')
     parser.add_argument('--batchnorm', default=False, action='store_true')
     parser.add_argument('--dropout', default=0.0, type=float)
-    parser.add_argument('--gpu', default=-1, type=int)
+    parser.add_argument('--device', default='cpu')
     parser.add_argument('--batch-size', default=128, type=int)
     args = parser.parse_args()
     evaluate(args)

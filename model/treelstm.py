@@ -1,6 +1,7 @@
+import math
+
 import torch
 from torch import nn
-from torch.autograd import Variable
 from torch.nn import init
 
 from . import basic
@@ -16,8 +17,8 @@ class BinaryTreeLSTMLayer(nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self):
-        init.kaiming_normal(self.comp_linear.weight.data)
-        init.constant(self.comp_linear.bias.data, val=0)
+        init.orthogonal_(self.comp_linear.weight.data)
+        init.constant_(self.comp_linear.bias.data, val=0)
 
     def forward(self, l=None, r=None):
         """
@@ -35,8 +36,8 @@ class BinaryTreeLSTMLayer(nn.Module):
         hl, cl = l
         hr, cr = r
         hlr_cat = torch.cat([hl, hr], dim=2)
-        treelstm_vector = basic.apply_nd(fn=self.comp_linear, input=hlr_cat)
-        i, fl, fr, u, o = treelstm_vector.chunk(num_chunks=5, dim=2)
+        treelstm_vector = self.comp_linear(hlr_cat)
+        i, fl, fr, u, o = treelstm_vector.chunk(chunks=5, dim=2)
         c = (cl*(fl + 1).sigmoid() + cr*(fr + 1).sigmoid()
              + u.tanh()*i.sigmoid())
         h = o.sigmoid() * c.tanh()
@@ -77,30 +78,30 @@ class BinaryTreeLSTM(nn.Module):
 
     def reset_parameters(self):
         if self.use_leaf_rnn:
-            init.kaiming_normal(self.leaf_rnn_cell.weight_ih.data)
-            init.orthogonal(self.leaf_rnn_cell.weight_hh.data)
-            init.constant(self.leaf_rnn_cell.bias_ih.data, val=0)
-            init.constant(self.leaf_rnn_cell.bias_hh.data, val=0)
+            init.kaiming_normal_(self.leaf_rnn_cell.weight_ih.data)
+            init.orthogonal_(self.leaf_rnn_cell.weight_hh.data)
+            init.constant_(self.leaf_rnn_cell.bias_ih.data, val=0)
+            init.constant_(self.leaf_rnn_cell.bias_hh.data, val=0)
             # Set forget bias to 1
             self.leaf_rnn_cell.bias_ih.data.chunk(4)[1].fill_(1)
             if self.bidirectional:
-                init.kaiming_normal(self.leaf_rnn_cell_bw.weight_ih.data)
-                init.orthogonal(self.leaf_rnn_cell_bw.weight_hh.data)
-                init.constant(self.leaf_rnn_cell_bw.bias_ih.data, val=0)
-                init.constant(self.leaf_rnn_cell_bw.bias_hh.data, val=0)
+                init.kaiming_normal_(self.leaf_rnn_cell_bw.weight_ih.data)
+                init.orthogonal_(self.leaf_rnn_cell_bw.weight_hh.data)
+                init.constant_(self.leaf_rnn_cell_bw.bias_ih.data, val=0)
+                init.constant_(self.leaf_rnn_cell_bw.bias_hh.data, val=0)
                 # Set forget bias to 1
                 self.leaf_rnn_cell_bw.bias_ih.data.chunk(4)[1].fill_(1)
         else:
-            init.kaiming_normal(self.word_linear.weight.data)
-            init.constant(self.word_linear.bias.data, val=0)
+            init.kaiming_normal_(self.word_linear.weight.data)
+            init.constant_(self.word_linear.bias.data, val=0)
         self.treelstm_layer.reset_parameters()
-        init.normal(self.comp_query.data, mean=0, std=0.01)
+        init.normal_(self.comp_query.data, mean=0, std=0.01)
 
     @staticmethod
     def update_state(old_state, new_state, done_mask):
         old_h, old_c = old_state
         new_h, new_c = new_state
-        done_mask = done_mask.float().unsqueeze(1).unsqueeze(2).expand_as(new_h)
+        done_mask = done_mask.float().unsqueeze(1).unsqueeze(2)
         h = done_mask * new_h + (1 - done_mask) * old_h[:, :-1, :]
         c = done_mask * new_c + (1 - done_mask) * old_c[:, :-1, :]
         return h, c
@@ -110,7 +111,8 @@ class BinaryTreeLSTM(nn.Module):
         old_h, old_c = old_state
         old_h_left, old_h_right = old_h[:, :-1, :], old_h[:, 1:, :]
         old_c_left, old_c_right = old_c[:, :-1, :], old_c[:, 1:, :]
-        comp_weights = basic.dot_nd(query=self.comp_query, candidates=new_h)
+        comp_weights = (self.comp_query * new_h).sum(-1)
+        comp_weights = comp_weights / math.sqrt(self.hidden_dim)
         if self.training:
             select_mask = basic.st_gumbel_softmax(
                 logits=comp_weights, temperature=self.gumbel_temperature,
@@ -122,11 +124,6 @@ class BinaryTreeLSTM(nn.Module):
         select_mask_cumsum = select_mask.cumsum(1)
         left_mask = 1 - select_mask_cumsum
         left_mask_expand = left_mask.unsqueeze(2).expand_as(old_h_left)
-        # right_mask_leftmost_col = Variable(
-        #     select_mask_cumsum.data.new(new_h.size(0), 1).zero_())
-        # right_mask = torch.cat(
-        #     [right_mask_leftmost_col, select_mask_cumsum[:, :-1]], dim=1)
-        # The simple way to make right_mask suggested by haichao592
         right_mask = select_mask_cumsum - select_mask
         right_mask_expand = right_mask.unsqueeze(2).expand_as(old_h_right)
         new_h = (select_mask_expand * new_h
@@ -148,8 +145,7 @@ class BinaryTreeLSTM(nn.Module):
             hs = []
             cs = []
             batch_size, max_length, _ = input.size()
-            zero_state = Variable(input.data.new(batch_size, self.hidden_dim)
-                                  .zero_())
+            zero_state = input.data.new_zeros(batch_size, self.hidden_dim)
             h_prev = c_prev = zero_state
             for i in range(max_length):
                 h, c = self.leaf_rnn_cell(
@@ -185,8 +181,8 @@ class BinaryTreeLSTM(nn.Module):
                 cs = torch.cat([cs, cs_bw], dim=2)
             state = (hs, cs)
         else:
-            state = basic.apply_nd(fn=self.word_linear, input=input)
-            state = state.chunk(num_chunks=2, dim=2)
+            state = self.word_linear(input)
+            state = state.chunk(chunks=2, dim=2)
         nodes = []
         if self.intra_attention:
             nodes.append(state[0])

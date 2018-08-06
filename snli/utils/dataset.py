@@ -27,12 +27,12 @@ class SNLIDataset(Dataset):
         pre_words = word_tokenize(pre_sentence)
         hyp_words = word_tokenize(hyp_sentence)
         pre = [self.word_vocab.word_to_id(w) for w in pre_words]
+        pre = pre[:self._max_length]
         hyp = [self.word_vocab.word_to_id(w) for w in hyp_words]
+        hyp = hyp[:self._max_length]
         pre_length = len(pre)
         hyp_length = len(hyp)
         label = obj['gold_label']
-        if len(pre) > self._max_length or len(hyp) > self._max_length:
-            return None
         if label == '-':
             return None
         label = self.label_vocab.word_to_id(label)

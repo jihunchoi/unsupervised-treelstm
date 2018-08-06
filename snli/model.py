@@ -40,10 +40,10 @@ class SNLIClassifier(nn.Module):
             self.bn_mlp_output.reset_parameters()
         for i in range(self.num_layers):
             linear_layer = self.mlp[i][0]
-            init.kaiming_normal(linear_layer.weight.data)
-            init.constant(linear_layer.bias.data, val=0)
-        init.uniform(self.clf_linear.weight.data, -0.005, 0.005)
-        init.constant(self.clf_linear.bias.data, val=0)
+            init.kaiming_normal_(linear_layer.weight.data)
+            init.constant_(linear_layer.bias.data, val=0)
+        init.uniform_(self.clf_linear.weight.data, -0.005, 0.005)
+        init.constant_(self.clf_linear.bias.data, val=0)
 
     def forward(self, pre, hyp):
         f1 = pre
@@ -98,7 +98,7 @@ class SNLIModel(nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self):
-        init.normal(self.word_embedding.weight.data, mean=0, std=0.01)
+        init.normal_(self.word_embedding.weight.data, mean=0, std=0.01)
         self.encoder.reset_parameters()
         self.classifier.reset_parameters()
 

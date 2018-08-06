@@ -5,7 +5,6 @@ import torch
 from torchtext import data, datasets
 
 from sst.model import SSTModel
-from utils.helper import wrap_with_variable, unwrap_scalar_variable
 
 
 def evaluate(args):
@@ -28,7 +27,7 @@ def evaluate(args):
     print(f'Number of classes: {len(label_field.vocab)}')
 
     _, _, test_loader = data.BucketIterator.splits(
-        datasets=dataset_splits, batch_size=args.batch_size, device=args.gpu)
+        datasets=dataset_splits, batch_size=args.batch_size, device=args.device)
 
     num_classes = len(label_field.vocab)
     model = SSTModel(num_classes=num_classes, num_words=len(text_field.vocab),
@@ -46,20 +45,19 @@ def evaluate(args):
     print(f'# of word embedding parameters: {num_embedding_params}')
     print(f'# of parameters (excluding word embeddings): '
           f'{num_params - num_embedding_params}')
-    model.load_state_dict(torch.load(args.model))
+    model.load_state_dict(torch.load(args.model, map_location='cpu'))
     model.eval()
-    if args.gpu > -1:
-        model.cuda(args.gpu)
+    model.to(args.device)
+    torch.set_grad_enabled(False)
     num_correct = 0
     num_data = len(test_dataset)
     for batch in test_loader:
         words, length = batch.text
         label = batch.label
-        length = wrap_with_variable(length, volatile=True, gpu=args.gpu)
         logits = model(words=words, length=length)
         label_pred = logits.max(1)[1]
-        num_correct_batch = torch.eq(label, label_pred).long().sum()
-        num_correct_batch = unwrap_scalar_variable(num_correct_batch)
+        num_correct_batch = torch.eq(label, label_pred).long().sum(
+        num_correct_batch = num_correct_batch.item()
         num_correct += num_correct_batch
     print(f'# data: {num_data}')
     print(f'# correct: {num_correct}')
@@ -77,7 +75,7 @@ def main():
     parser.add_argument('--intra-attention', default=False, action='store_true')
     parser.add_argument('--batchnorm', default=False, action='store_true')
     parser.add_argument('--dropout', default=0.0, type=float)
-    parser.add_argument('--gpu', default=-1, type=int)
+    parser.add_argument('--device', default='cpu')
     parser.add_argument('--batch-size', default=128, type=int)
     parser.add_argument('--bidirectional', default=False, action='store_true')
     parser.add_argument('--fine-grained', default=False, action='store_true')

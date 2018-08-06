@@ -2,17 +2,15 @@ import argparse
 import logging
 import os
 
-import tensorboard
-from tensorboard import summary
+from tensorboardX import SummaryWriter
 
 import torch
 from torch import nn, optim
 from torch.optim import lr_scheduler
-from torch.nn.utils import clip_grad_norm
+from torch.nn.utils import clip_grad_norm_
 from torchtext import data, datasets
 
 from sst.model import SSTModel
-from utils.helper import wrap_with_variable, unwrap_scalar_variable
 
 
 logging.basicConfig(level=logging.INFO,
@@ -39,7 +37,7 @@ def train(args):
     logging.info(f'Number of classes: {len(label_field.vocab)}')
 
     train_loader, valid_loader, _ = data.BucketIterator.splits(
-        datasets=dataset_splits, batch_size=args.batch_size, device=args.gpu)
+        datasets=dataset_splits, batch_size=args.batch_size, device=args.device)
 
     num_classes = len(label_field.vocab)
     model = SSTModel(num_classes=num_classes, num_words=len(text_field.vocab),
@@ -56,9 +54,8 @@ def train(args):
     if args.fix_word_embedding:
         logging.info('Will not update word embeddings')
         model.word_embedding.weight.requires_grad = False
-    if args.gpu > -1:
-        logging.info(f'Using GPU {args.gpu}')
-        model.cuda(args.gpu)
+    logging.info(f'Using device {args.device}')
+    model.to(args.device)
     params = [p for p in model.parameters() if p.requires_grad]
     if args.optimizer == 'adam':
         optimizer_class = optim.Adam
@@ -72,17 +69,15 @@ def train(args):
         patience=20 * args.halve_lr_every, verbose=True)
     criterion = nn.CrossEntropyLoss()
 
-    train_summary_writer = tensorboard.FileWriter(
-        logdir=os.path.join(args.save_dir, 'log', 'train'), flush_secs=10)
-    valid_summary_writer = tensorboard.FileWriter(
-        logdir=os.path.join(args.save_dir, 'log', 'valid'), flush_secs=10)
+    train_summary_writer = SummaryWriter(
+        log_dir=os.path.join(args.save_dir, 'log', 'train'))
+    valid_summary_writer = SummaryWriter(
+        log_dir=os.path.join(args.save_dir, 'log', 'valid'))
 
     def run_iter(batch, is_training):
         model.train(is_training)
         words, length = batch.text
         label = batch.label
-        length = wrap_with_variable(batch.text[1], volatile=not is_training,
-                                    gpu=args.gpu)
         logits = model(words=words, length=length)
         label_pred = logits.max(1)[1]
         accuracy = torch.eq(label, label_pred).float().mean()
@@ -90,14 +85,15 @@ def train(args):
         if is_training:
             optimizer.zero_grad()
             loss.backward()
-            clip_grad_norm(parameters=params, max_norm=5)
+            clip_grad_norm_(parameters=params, max_norm=5)
             optimizer.step()
         return loss, accuracy
 
     def add_scalar_summary(summary_writer, name, value, step):
-        value = unwrap_scalar_variable(value)
-        summ = summary.scalar(name=name, scalar=value)
-        summary_writer.add_summary(summary=summ, global_step=step)
+        if torch.is_tensor(value):
+            value = value.item()
+        summary_writer.add_scalar(tag=name, scalar_value=value,
+                                  global_step=step)
 
     num_train_batches = len(train_loader)
     validate_every = num_train_batches // 20
@@ -120,8 +116,8 @@ def train(args):
             for valid_batch in valid_loader:
                 valid_loss, valid_accuracy = run_iter(
                     batch=valid_batch, is_training=False)
-                valid_loss_sum += unwrap_scalar_variable(valid_loss)
-                valid_accuracy_sum += unwrap_scalar_variable(valid_accuracy)
+                valid_loss_sum += valid_loss.item()
+                valid_accuracy_sum += valid_accuracy.item()
             valid_loss = valid_loss_sum / num_valid_batches
             valid_accuracy = valid_accuracy_sum / num_valid_batches
             add_scalar_summary(
@@ -131,7 +127,7 @@ def train(args):
                 summary_writer=valid_summary_writer,
                 name='accuracy', value=valid_accuracy, step=iter_count)
             scheduler.step(valid_accuracy)
-            progress = train_loader.epoch
+            progress = train_loader.iterations / len(train_loader)
             logging.info(f'Epoch {progress:.2f}: '
                          f'valid loss = {valid_loss:.4f}, '
                          f'valid accuracy = {valid_accuracy:.4f}')
@@ -162,7 +158,7 @@ def main():
     parser.add_argument('--pretrained', default=None)
     parser.add_argument('--fix-word-embedding', default=False,
                         action='store_true')
-    parser.add_argument('--gpu', default=-1, type=int)
+    parser.add_argument('--device', default='cpu')
     parser.add_argument('--batch-size', required=True, type=int)
     parser.add_argument('--max-epoch', required=True, type=int)
     parser.add_argument('--save-dir', required=True)

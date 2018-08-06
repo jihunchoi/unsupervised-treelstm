@@ -4,19 +4,17 @@ import os
 import pickle
 
 import math
-import tensorboard
-from tensorboard import summary
+from tensorboardX import SummaryWriter
 
 import torch
 from torch import nn, optim
-from torch.nn.utils import clip_grad_norm
+from torch.nn.utils import clip_grad_norm_
 from torch.optim import lr_scheduler
 from torch.utils.data import DataLoader
 
 from snli.model import SNLIModel
 from snli.utils.dataset import SNLIDataset
 from utils.glove import load_glove
-from utils.helper import wrap_with_variable, unwrap_scalar_variable
 
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s %(levelname)-8s %(message)s')
@@ -58,9 +56,8 @@ def train(args):
     if args.fix_word_embedding:
         logging.info('Will not update word embeddings')
         model.word_embedding.weight.requires_grad = False
-    if args.gpu > -1:
-        logging.info(f'Using GPU {args.gpu}')
-        model.cuda(args.gpu)
+    model.to(args.device)
+    logging.info(f'Using device {args.device}')
     if args.optimizer == 'adam':
         optimizer_class = optim.Adam
     elif args.optimizer == 'adagrad':
@@ -73,23 +70,18 @@ def train(args):
         optimizer=optimizer, mode='max', factor=0.5, patience=10, verbose=True)
     criterion = nn.CrossEntropyLoss()
 
-    train_summary_writer = tensorboard.FileWriter(
-        logdir=os.path.join(args.save_dir, 'log', 'train'), flush_secs=10)
-    valid_summary_writer = tensorboard.FileWriter(
-        logdir=os.path.join(args.save_dir, 'log', 'valid'), flush_secs=10)
+    train_summary_writer = SummaryWriter(
+        log_dir=os.path.join(args.save_dir, 'log', 'train'))
+    valid_summary_writer = SummaryWriter(
+        log_dir=os.path.join(args.save_dir, 'log', 'valid'))
 
     def run_iter(batch, is_training):
         model.train(is_training)
-        pre = wrap_with_variable(batch['pre'], volatile=not is_training,
-                                 gpu=args.gpu)
-        hyp = wrap_with_variable(batch['hyp'], volatile=not is_training,
-                                 gpu=args.gpu)
-        pre_length = wrap_with_variable(
-            batch['pre_length'], volatile=not is_training, gpu=args.gpu)
-        hyp_length = wrap_with_variable(
-            batch['hyp_length'], volatile=not is_training, gpu=args.gpu)
-        label = wrap_with_variable(batch['label'], volatile=not is_training,
-                                   gpu=args.gpu)
+        pre = batch['pre'].to(args.device)
+        hyp = batch['hyp'].to(args.device)
+        pre_length = batch['pre_length'].to(args.device)
+        hyp_length = batch['hyp_length'].to(args.device)
+        label = batch['label'].to(args.device)
         logits = model(pre=pre, pre_length=pre_length,
                        hyp=hyp, hyp_length=hyp_length)
         label_pred = logits.max(1)[1]
@@ -98,14 +90,15 @@ def train(args):
         if is_training:
             optimizer.zero_grad()
             loss.backward()
-            clip_grad_norm(parameters=params, max_norm=5)
+            clip_grad_norm_(parameters=params, max_norm=5)
             optimizer.step()
         return loss, accuracy
 
     def add_scalar_summary(summary_writer, name, value, step):
-        value = unwrap_scalar_variable(value)
-        summ = summary.scalar(name=name, scalar=value)
-        summary_writer.add_summary(summary=summ, global_step=step)
+        if torch.is_tensor(value):
+            value = value.item()
+        summary_writer.add_scalar(tag=name, scalar_value=value,
+                                  global_step=step)
 
     num_train_batches = len(train_loader)
     validate_every = num_train_batches // 10
@@ -131,13 +124,15 @@ def train(args):
                 name='accuracy', value=train_accuracy, step=iter_count)
 
             if (batch_iter + 1) % validate_every == 0:
+                torch.set_grad_enabled(False)
                 valid_loss_sum = valid_accuracy_sum = 0
                 num_valid_batches = len(valid_loader)
                 for valid_batch in valid_loader:
                     valid_loss, valid_accuracy = run_iter(
                         batch=valid_batch, is_training=False)
-                    valid_loss_sum += unwrap_scalar_variable(valid_loss)
-                    valid_accuracy_sum += unwrap_scalar_variable(valid_accuracy)
+                    valid_loss_sum += valid_loss.item()
+                    valid_accuracy_sum += valid_accuracy.item()
+                torch.set_grad_enabled(True)
                 valid_loss = valid_loss_sum / num_valid_batches
                 valid_accuracy = valid_accuracy_sum / num_valid_batches
                 scheduler.step(valid_accuracy)
@@ -179,7 +174,7 @@ def main():
     parser.add_argument('--glove', default=None)
     parser.add_argument('--fix-word-embedding', default=False,
                         action='store_true')
-    parser.add_argument('--gpu', default=-1, type=int)
+    parser.add_argument('--device', default='cpu')
     parser.add_argument('--batch-size', required=True, type=int)
     parser.add_argument('--max-epoch', required=True, type=int)
     parser.add_argument('--save-dir', required=True)
